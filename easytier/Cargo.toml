@@ -323,6 +323,7 @@ tokio-socks = "0.5.3"
 
 [features]
 default = [
+    "x509-auth",
     "cli",
     "wireguard",
     "websocket",
@@ -344,6 +345,7 @@ default = [
     "tcp-hole-punch",
 ]
 full = [
+    "x509-auth",
     "cli",
     "websocket",
     "wireguard",
@@ -370,6 +372,7 @@ wireguard = ["vpn-portal", "dep:boringtun", "dep:hkdf", "dep:sha2", "ring-crypto
 quic = ["wrapped-transport", "easytier-core/proxy-packet", "dep:quinn", "dep:quinn-proto", "dep:seahash", "dep:rustls", "easytier-proto/quic"]
 kcp = ["wrapped-transport", "easytier-core/proxy-packet", "dep:kcp-sys"]
 mimalloc = ["dep:mimalloc"]
+x509-auth = ["easytier-core/x509-auth"]
 aes-gcm = ["easytier-core/aes-gcm"]
 openssl-crypto = ["easytier-core/openssl-crypto"]
 ring-crypto = ["easytier-core/ring-crypto"]

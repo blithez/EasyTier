@@ -394,4 +394,7 @@ message PeerConnNoiseMsg3Pb {
   common.UUID b_conn_id_echo = 2;
   optional bytes secret_proof_32 = 3;
   bytes secret_digest = 4;
+  repeated bytes client_certificate_chain = 5;
+  optional uint32 client_signature_scheme = 6;
+  optional bytes client_certificate_signature = 7;
 }

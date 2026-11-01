@@ -165,6 +165,7 @@ fn main() -> anyhow::Result<()> {
             ".common.Ipv4Addr",
             ".common.Ipv6Addr",
             ".common.UUID",
+            ".common.X509AuthConfig",
             ".api.manage.ManagedCredentialConfig",
             ".api.manage.VpnPortalConfig",
         ])

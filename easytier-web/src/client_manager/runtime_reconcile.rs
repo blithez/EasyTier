@@ -1682,12 +1682,14 @@ mod tests {
             enabled: true,
             local_private_key: Some("mUuD5fsIm/ftvgS4WBAYFMNLqWX3qT9rnm4PrnOqb9s=".to_string()),
             local_public_key: None,
+            x509: None,
         });
         let mut desired = current.clone();
         desired.secure_mode = Some(easytier::proto::common::SecureModeConfig {
             enabled: true,
             local_private_key: Some("aEpz80FuYbaY4QLJizAIuIcK4TYsoSA9jHHCXCOQJoc=".to_string()),
             local_public_key: None,
+            x509: None,
         });
 
         let patch = web_source_runtime_patch(&current, &desired, false, true).expect("build patch");
@@ -1702,6 +1704,7 @@ mod tests {
             enabled: true,
             local_private_key: Some("mUuD5fsIm/ftvgS4WBAYFMNLqWX3qT9rnm4PrnOqb9s=".to_string()),
             local_public_key: Some("4x6L5dZjB8hsPO4f96Hyhi4xFealBu6i3BxRVBYR1Fc=".to_string()),
+            x509: None,
         });
         let mut desired =
             config_with_port_forwards(vec![port_forward(23000, 5174), port_forward(23007, 3389)]);
@@ -1709,6 +1712,7 @@ mod tests {
             enabled: true,
             local_private_key: None,
             local_public_key: None,
+            x509: None,
         });
 
         let patch = web_source_runtime_patch(&current, &desired, false, true)

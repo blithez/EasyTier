@@ -448,6 +448,7 @@ fn build_peer_snapshot(
             enabled: true,
             local_private_key: Some(BASE64_STANDARD.encode(private.as_bytes())),
             local_public_key: Some(BASE64_STANDARD.encode(public.as_bytes())),
+            x509: snapshot.runtime.secure_mode.as_ref().and_then(|c| c.x509.clone()),
         });
         Some(*public.as_bytes())
     } else {
@@ -548,6 +549,7 @@ mod tests {
                 enabled: true,
                 local_private_key: Some(BASE64_STANDARD.encode(private.as_bytes())),
                 local_public_key: Some(BASE64_STANDARD.encode(public.as_bytes())),
+                x509: None,
             }
         });
         let runtime = PeerRuntimeConfig {
