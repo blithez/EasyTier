@@ -111,7 +111,7 @@ panic = "abort"
 lto = true
 codegen-units = 1
 opt-level = 3
-strip = true
+# strip = true
 
 [profile.mini]
 inherits = "release"

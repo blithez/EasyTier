@@ -1,0 +1,63 @@
+#!/bin/bash -eu
+#
+# Run a command in a docker container
+#
+
+if [ "$#" -lt "1" ]; then
+    echo "Run command in a Docker container (if possible)"
+    echo ""
+    echo "Syntax: $0 <command>"
+    exit 1
+fi
+
+#export ALL_PROXY=socks5://192.168.1.22:10808
+#export HTTPS_PROXY=socks5://192.168.1.22:10808
+#export HTTP_PROXY=socks5://192.168.1.22:10808
+
+DOCKER_VERSION=`podman version` || true
+if [ -z "$DOCKER_VERSION" ]; then
+    echo "Docker is not installed, falling back to legacy schroot!"
+    schroot -c trusty64 -- $@
+else
+    USERNAME=`id -un` || true
+    DOCKER_IMAGE_TAG=build-${USERNAME}:resolute
+
+    GROUPNAME=`id -gn` || true
+    if ! [[ $GROUPNAME =~ [^0-9] ]]; then
+        # Unable to get the group name, fallback to user name. (Use in Git Bash for Windows)
+        GROUPNAME=$USERNAME;
+    fi
+    if [[ $GROUPNAME =~ [^0-9a-zA-Z_\.@-\$] ]]; then
+        # Group name contains invalid characters, fallback to user name. (OSX domain accounts)
+        GROUPNAME=$USERNAME;
+    fi
+    USER=`id -u`
+    if [[ "$USER" -gt "2048" && $(uname) =~ "Darwin" ]]; then
+        # Workaround docker bug for high user IDs. (This happens on OSX)
+        USER="1234"
+    fi
+
+    podman image build \
+        --build-arg MY_USER=$USERNAME \
+        --build-arg MY_GROUP=$GROUPNAME \
+        --build-arg MY_UID=$USER \
+        --build-arg MY_GID=$(id -g) \
+        --network=host \
+        ./docker \
+        -t ${DOCKER_IMAGE_TAG}
+
+    if test -t 1; then
+        USE_TTY="-it"
+    else
+        USE_TTY=""
+    fi
+
+    # Start a container from the image, running <command> interactively as the user.
+    # $PWD is shared between host and container. The container is deleted when done.
+    podman container run ${USE_TTY} --rm \
+        -u "$USER:$(id -g)" \
+        -v $PWD:$PWD:delegated \
+        -w $PWD \
+        ${DOCKER_IMAGE_TAG} \
+        $@
+fi
