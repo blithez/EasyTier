@@ -8,3 +8,6 @@ pub(crate) mod peer_conn_ping;
 mod peer_flow;
 pub(crate) mod peer_map;
 pub(crate) mod peer_session;
+
+#[cfg(feature = "x509-auth")]
+pub(crate) mod x509_auth;

@@ -466,6 +466,7 @@ impl NetworkConfigExt for NetworkConfig {
                     enabled: true,
                     local_private_key: Some(credential_secret),
                     local_public_key: None,
+                    x509: self.secure_mode.as_ref().and_then(|c| c.x509.clone()),
                 },
             )?));
         } else {

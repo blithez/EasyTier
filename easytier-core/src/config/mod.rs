@@ -106,6 +106,13 @@ impl MappedListenerPolicy {
 pub fn normalize_secure_mode_config(
     mut config: common_pb::SecureModeConfig,
 ) -> anyhow::Result<common_pb::SecureModeConfig> {
+    if let Some(x509) = &config.x509 {
+        anyhow::ensure!(config.enabled, "X.509 authentication requires secure_mode.enabled");
+        #[cfg(feature = "x509-auth")]
+        crate::peers::conn::x509_auth::validate_config(x509)?;
+        #[cfg(not(feature = "x509-auth"))]
+        anyhow::bail!("this build does not support X.509 authentication");
+    }
     if !config.enabled {
         return Ok(config);
     }
@@ -716,6 +723,7 @@ mod tests {
             enabled: true,
             local_private_key: None,
             local_public_key: None,
+            x509: None,
         })
         .unwrap();
 
@@ -732,6 +740,7 @@ mod tests {
             enabled: true,
             local_private_key: Some(BASE64_STANDARD.encode(private_key.as_bytes())),
             local_public_key: Some(BASE64_STANDARD.encode(public_key.as_bytes())),
+            x509: None,
         };
 
         assert_eq!(
@@ -748,6 +757,7 @@ mod tests {
             enabled: true,
             local_private_key: Some(BASE64_STANDARD.encode(private_key.as_bytes())),
             local_public_key: Some(BASE64_STANDARD.encode(other_public_key.as_bytes())),
+            x509: None,
         })
         .unwrap_err()
         .to_string();
@@ -764,6 +774,7 @@ mod tests {
             enabled: false,
             local_private_key: Some("not-base64".to_string()),
             local_public_key: Some("not-base64".to_string()),
+            x509: None,
         };
 
         assert_eq!(

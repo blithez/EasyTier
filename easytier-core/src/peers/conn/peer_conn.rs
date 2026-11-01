@@ -63,6 +63,7 @@ use crate::{
 pub type PeerConnId = uuid::Uuid;
 
 const MAGIC: u32 = 0xd1e1a5e1;
+const X509_FEATURE: &str = "x509-client-auth-v1";
 const VERSION: u32 = 1;
 
 /// The proof of client secret.
@@ -420,6 +421,63 @@ impl PeerConn {
             .unwrap_or(false)
     }
 
+    fn x509_required(&self) -> bool {
+        self.secure_mode_cfg.as_ref().and_then(|c| c.x509.as_ref())
+            .is_some_and(|x| !x.trusted_client_ca_pem.is_empty())
+    }
+
+    async fn respond_x509_challenge(&self, transcript: &[u8], challenge: &ZCPacket) -> Result<(), Error> {
+        #[cfg(feature = "x509-auth")]
+        {
+            if challenge.payload().len() != 32 {
+                return Err(Error::WaitRespError("invalid X.509 challenge".to_owned()));
+            }
+            let config = self.secure_mode_cfg.as_ref().and_then(|c| c.x509.as_ref())
+                .ok_or_else(|| Error::WaitRespError("server requires an X.509 client certificate".to_owned()))?;
+            let mut response = PeerConnNoiseMsg3Pb::default();
+            let proof_context = [transcript, challenge.payload()].concat();
+            super::x509_auth::sign(config, &proof_context, &mut response)
+                .map_err(|e| Error::WaitRespError(format!("X.509 client signing failed: {e}")))?;
+            let mut packet = ZCPacket::new_with_payload(&response.encode_to_vec());
+            packet.fill_peer_manager_hdr(self.my_peer_id, challenge.get_src_peer_id().unwrap_or_default(),
+                PacketType::X509Response as u8);
+            self.sink.send(packet).await?;
+            Ok(())
+        }
+        #[cfg(not(feature = "x509-auth"))]
+        {
+            let _ = (transcript, challenge);
+            Err(Error::WaitRespError("X.509 authentication is unavailable in this build".to_owned()))
+        }
+    }
+
+    async fn challenge_x509_client(&self, transcript: &[u8], remote_peer_id: PeerId) -> Result<(), Error> {
+        #[cfg(feature = "x509-auth")]
+        {
+            let nonce: [u8; 32] = rand::random();
+            let mut packet = ZCPacket::new_with_payload(&nonce);
+            packet.fill_peer_manager_hdr(self.my_peer_id, remote_peer_id, PacketType::X509Challenge as u8);
+            self.sink.send(packet).await?;
+            let response = timeout(Duration::from_secs(5),
+                self.recv_next_peer_manager_packet(Some(PacketType::X509Response))).await??;
+            if response.payload().len() > 60 * 1024 {
+                return Err(Error::WaitRespError("X.509 response too large".to_owned()));
+            }
+            let response = PeerConnNoiseMsg3Pb::decode(response.payload())
+                .map_err(|e| Error::WaitRespError(format!("invalid X.509 response: {e}")))?;
+            let config = self.secure_mode_cfg.as_ref().and_then(|c| c.x509.as_ref()).unwrap();
+            let proof_context = [transcript, nonce.as_slice()].concat();
+            super::x509_auth::verify(config, &proof_context, &response)
+                .map_err(|e| Error::WaitRespError(format!("X.509 client authentication failed: {e}")))?;
+            Ok(())
+        }
+        #[cfg(not(feature = "x509-auth"))]
+        {
+            let _ = (transcript, remote_peer_id);
+            Err(Error::WaitRespError("X.509 authentication is unavailable in this build".to_owned()))
+        }
+    }
+
     // pri, pub
     fn get_keypair(&self) -> Result<(Vec<u8>, Vec<u8>), Error> {
         let cfg = self
@@ -676,7 +734,10 @@ impl PeerConn {
             remote_peer_id
         );
         let payload = pb.encode_to_vec();
-        let mut msg = vec![0u8; 4096];
+        if payload.len() > 60 * 1024 {
+            return Err(Error::WaitRespError("Noise handshake payload too large".to_owned()));
+        }
+        let mut msg = vec![0u8; 65535];
         let msg_len = hs
             .write_message(&payload, &mut msg)
             .map_err(|e| Error::WaitRespError(format!("noise write msg1 failed: {e:?}")))?;
@@ -815,7 +876,13 @@ impl PeerConn {
             a_session_generation,
             a_conn_id: Some(a_conn_id.into()),
             client_encryption_algorithm: self.my_encrypt_algo.clone(),
-            features: vec![LIVENESS_ECHO_FEATURE.to_owned()],
+            features: {
+                let mut features = vec![LIVENESS_ECHO_FEATURE.to_owned()];
+                if cfg!(feature = "x509-auth") && self.secure_mode_cfg.as_ref().is_some_and(|c| c.x509.is_some()) {
+                    features.push(X509_FEATURE.to_owned());
+                }
+                features
+            },
         };
 
         let mut hs = builder
@@ -834,11 +901,16 @@ impl PeerConn {
 
         let server_handshake_hash = hs.get_handshake_hash().to_vec();
 
-        let msg2 = timeout(
-            Duration::from_secs(5),
-            self.recv_next_peer_manager_packet(Some(PacketType::NoiseHandshakeMsg2)),
-        )
-        .await??;
+        let mut msg2 = timeout(
+            Duration::from_secs(5), self.recv_next_peer_manager_packet(None),
+        ).await??;
+        let server_requires_x509 = msg2.peer_manager_header()
+            .is_some_and(|h| h.packet_type == PacketType::X509Challenge as u8);
+        if server_requires_x509 {
+            self.respond_x509_challenge(&server_handshake_hash, &msg2).await?;
+            msg2 = timeout(Duration::from_secs(5),
+                self.recv_next_peer_manager_packet(Some(PacketType::NoiseHandshakeMsg2))).await??;
+        }
         self.record_control_rx(&network.network_name, msg2.buf_len() as u64);
         let remote_peer_id = msg2.get_src_peer_id().expect("missing src peer id");
         if let Some(hint) = self.peer_id_hint
@@ -875,12 +947,22 @@ impl PeerConn {
 
         let secret_digest = self.context.secret_digest(&network);
 
-        let msg3_pb = PeerConnNoiseMsg3Pb {
+        let mut msg3_pb = PeerConnNoiseMsg3Pb {
             a_conn_id_echo: Some(a_conn_id.into()),
             b_conn_id_echo: msg2_pb.b_conn_id,
             secret_proof_32,
             secret_digest: secret_digest.clone(),
+            ..Default::default()
         };
+        if server_requires_x509 {
+            let x509 = self.secure_mode_cfg.as_ref().and_then(|c| c.x509.as_ref())
+                .ok_or_else(|| Error::WaitRespError("X.509 client identity required".to_owned()))?;
+            #[cfg(feature = "x509-auth")]
+            super::x509_auth::sign(x509, &handshake_hash_for_proof, &mut msg3_pb)
+                .map_err(|e| Error::WaitRespError(format!("X.509 client signing failed: {e}")))?;
+            #[cfg(not(feature = "x509-auth"))]
+            return Err(Error::WaitRespError("X.509 authentication is unavailable in this build".to_owned()));
+        }
         self.send_noise_msg(
             msg3_pb,
             PacketType::NoiseHandshakeMsg3,
@@ -993,7 +1075,7 @@ impl PeerConn {
 
         let msg = match hs {
             Some(hs) => {
-                let mut out = vec![0u8; 4096];
+                let mut out = vec![0u8; 65535];
                 let out_len = hs
                     .read_message(pkt.payload(), &mut out)
                     .map_err(|e| Error::WaitRespError(format!("noise read msg failed: {e:?}")))?;
@@ -1041,6 +1123,13 @@ impl PeerConn {
         )?;
         let remote_network_name = msg1_pb.a_network_name.clone();
         self.record_control_rx(&remote_network_name, first_msg1_len);
+
+        if self.x509_required() {
+            if !msg1_pb.features.iter().any(|f| f == X509_FEATURE) {
+                return Err(Error::WaitRespError("X.509 client authentication support required".to_owned()));
+            }
+            self.challenge_x509_client(hs.get_handshake_hash(), remote_peer_id).await?;
+        }
 
         // this may update my peer id
         handshake_recved(self, &remote_network_name)?;
@@ -1124,6 +1213,18 @@ impl PeerConn {
             ));
         }
 
+        // Authenticate before storing the client's static key or admitting any
+        // application traffic. Apply to same-network peers as well as foreign peers.
+        if let Some(x509) = self.secure_mode_cfg.as_ref().and_then(|c| c.x509.as_ref())
+            && !x509.trusted_client_ca_pem.is_empty()
+        {
+            #[cfg(feature = "x509-auth")]
+            super::x509_auth::verify(x509, &handshake_hash_for_proof, &msg3_pb)
+                .map_err(|e| Error::WaitRespError(format!("X.509 client authentication failed: {e}")))?;
+            #[cfg(not(feature = "x509-auth"))]
+            return Err(Error::WaitRespError("X.509 authentication is unavailable in this build".to_owned()));
+        }
+
         let remote_static = hs
             .get_remote_static()
             .map(|x: &[u8]| x.to_vec())
@@ -1198,6 +1299,12 @@ impl PeerConn {
     where
         Fn: FnMut(&mut PeerConn, &str) -> Result<(), Error> + Send,
     {
+        // Validate on every handshake too: portable callers can bypass TOML
+        // normalization. Never silently ignore a configured authentication policy.
+        if self.secure_mode_cfg.as_ref().is_some_and(|c| c.x509.is_some()) {
+            crate::config::normalize_secure_mode_config(self.secure_mode_cfg.clone().unwrap())
+                .map_err(|e| Error::WaitRespError(format!("invalid X.509 configuration: {e}")))?;
+        }
         let first_pkt = timeout(
             Duration::from_secs(5),
             self.recv_next_peer_manager_packet(None),
@@ -1223,6 +1330,11 @@ impl PeerConn {
             self.info = Some(handshake_rsp);
             self.is_client = Some(false);
         } else if hdr.packet_type == PacketType::HandShake as u8 {
+            if self.secure_mode_cfg.as_ref().and_then(|c| c.x509.as_ref())
+                .is_some_and(|x| !x.trusted_client_ca_pem.is_empty())
+            {
+                return Err(Error::WaitRespError("X.509 authentication requires a Noise handshake".to_owned()));
+            }
             let rsp = Self::decode_handshake_packet(&first_pkt)?;
             handshake_recved(self, &rsp.network_name)?;
             tracing::info!("handshake request: {:?}", rsp);
@@ -1252,6 +1364,10 @@ impl PeerConn {
 
     #[tracing::instrument]
     pub async fn do_handshake_as_client(&mut self) -> Result<(), Error> {
+        if self.secure_mode_cfg.as_ref().is_some_and(|c| c.x509.is_some()) {
+            crate::config::normalize_secure_mode_config(self.secure_mode_cfg.clone().unwrap())
+                .map_err(|e| Error::WaitRespError(format!("invalid X.509 configuration: {e}")))?;
+        }
         if self.is_secure_mode_enabled() {
             let noise = self.do_noise_handshake_as_client().await?;
             self.session_filter.set_session(noise.session.clone());

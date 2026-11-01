@@ -104,6 +104,8 @@ pub enum PacketType {
     NoiseHandshakeMsg3 = 15,
     RelayHandshake = 20,
     RelayHandshakeAck = 21,
+    X509Challenge = 22,
+    X509Response = 23,
 
     // used internally,
     DataWithKcpSrcModified = 18,

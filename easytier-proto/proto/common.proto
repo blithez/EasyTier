@@ -274,6 +274,15 @@ message PortForwardConfigPb {
 
 message ProxyDstInfo { SocketAddr dst_addr = 1; }
 
+// Inline PEM material keeps configuration portable across hosts.
+message X509AuthConfig {
+  // Nonempty on a server: require certificates on EVERY inbound connection.
+  repeated string trusted_client_ca_pem = 1;
+  optional string client_certificate_pem = 2;
+  optional string client_private_key_pem = 3;
+  repeated string client_crl_pem = 4;
+}
+
 message SecureModeConfig {
   bool enabled = 1; 
 
@@ -282,4 +291,6 @@ message SecureModeConfig {
 
   // base64(X25519 public key), required if local_private_key is set
   optional string local_public_key = 3;
+
+  optional X509AuthConfig x509 = 4;
 }

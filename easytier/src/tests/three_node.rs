@@ -5287,6 +5287,7 @@ pub fn generate_secure_mode_config_with_key(
         enabled: true,
         local_private_key: Some(BASE64_STANDARD.encode(private_key.as_bytes())),
         local_public_key: Some(BASE64_STANDARD.encode(public.as_bytes())),
+        x509: None,
     }
 }
 

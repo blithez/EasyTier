@@ -921,6 +921,7 @@ impl NetworkOptions {
                 enabled: true,
                 local_private_key: Some(credential_secret.clone()),
                 local_public_key: None,
+                x509: cfg.get_secure_mode().and_then(|c| c.x509),
             };
             cfg.set_secure_mode(Some(normalize_secure_mode_config(c)?));
         } else if let Some(secure_mode) = self.secure_mode
@@ -941,6 +942,7 @@ impl NetworkOptions {
                 enabled: secure_mode,
                 local_private_key,
                 local_public_key,
+                x509: cfg.get_secure_mode().and_then(|c| c.x509),
             };
             cfg.set_secure_mode(Some(normalize_secure_mode_config(c)?));
         }

@@ -183,6 +183,7 @@ impl GatewayRuntimeFactory for NativeGatewayRuntimeFactory {
                 local_public_key: Some(
                     base64::engine::general_purpose::STANDARD.encode(public.as_bytes()),
                 ),
+                x509: None,
             }));
         }
         config.set_managed_credentials(spec.credentials.clone());

@@ -3130,7 +3130,9 @@ impl PeerPacketRouter {
                 && (packet_type == PacketType::HandShake as u8
                     || packet_type == PacketType::NoiseHandshakeMsg1 as u8
                     || packet_type == PacketType::NoiseHandshakeMsg2 as u8
-                    || packet_type == PacketType::NoiseHandshakeMsg3 as u8)
+                    || packet_type == PacketType::NoiseHandshakeMsg3 as u8
+                    || packet_type == PacketType::X509Challenge as u8
+                    || packet_type == PacketType::X509Response as u8)
             {
                 tracing::debug!("credential node dropping forwarded handshake packet");
                 return;
@@ -3805,6 +3807,7 @@ mod tests {
             enabled: true,
             local_private_key: Some(BASE64_STANDARD.encode(private.as_bytes())),
             local_public_key: Some(BASE64_STANDARD.encode(public.as_bytes())),
+            x509: None,
         }
     }
 
@@ -4712,7 +4715,8 @@ mod tests {
             PacketType::NoiseHandshakeMsg1,
             PacketType::NoiseHandshakeMsg2,
             PacketType::NoiseHandshakeMsg3,
-            PacketType::RelayHandshake,
+            PacketType::X509Challenge,
+            PacketType::X509Response,            PacketType::RelayHandshake,
             PacketType::RelayHandshakeAck,
         ] {
             assert!(!is_relay_data_packet(packet_type as u8));

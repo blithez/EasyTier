@@ -1252,6 +1252,7 @@ mod tests {
                     enabled: true,
                     local_private_key: Some(BASE64_STANDARD.encode(private.to_bytes())),
                     local_public_key: Some(BASE64_STANDARD.encode(public.as_bytes())),
+                    x509: None,
                 });
             });
         }

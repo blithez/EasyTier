@@ -145,6 +145,7 @@ async fn peer_conn_noise_handshake_advertises_liveness_echo() {
                 enabled: true,
                 local_private_key: Some(BASE64_STANDARD.encode(private.as_bytes())),
                 local_public_key: Some(BASE64_STANDARD.encode(public.as_bytes())),
+                x509: None,
             }),
         )
     }
@@ -406,4 +407,109 @@ async fn peer_map_reselects_cached_connection_after_close() {
         client_map.get_peer_default_conn_id(2).await,
         Some(first_conn_id)
     );
+}
+
+#[cfg(feature = "x509-auth")]
+mod x509_handshake_tests {
+    use super::*;
+    use crate::config::normalize_secure_mode_config;
+    use crate::proto::common::{SecureModeConfig, X509AuthConfig};
+
+    fn client_auth() -> X509AuthConfig {
+        X509AuthConfig {
+            client_certificate_pem: Some(include_str!("../../tests/data/x509/client.pem").to_owned()),
+            client_private_key_pem: Some(include_str!("../../tests/data/x509/client.key.pem").to_owned()),
+            ..Default::default()
+        }
+    }
+
+    fn server_auth() -> X509AuthConfig {
+        X509AuthConfig {
+            trusted_client_ca_pem: vec![include_str!("../../tests/data/x509/ca.pem").to_owned()],
+            ..Default::default()
+        }
+    }
+
+    fn context(name: &str, auth: Option<X509AuthConfig>, noise: bool) -> Arc<NoopPeerContext> {
+        let context = NoopPeerContext::new(NetworkIdentity::new(name.to_owned(), "secret".to_owned()));
+        if !noise { return Arc::new(context); }
+        Arc::new(context.with_secure_mode(normalize_secure_mode_config(SecureModeConfig {
+            enabled: true, x509: auth, ..Default::default()
+        }).unwrap()))
+    }
+
+    async fn handshake(
+        client: Arc<NoopPeerContext>, server: Arc<NoopPeerContext>,
+    ) -> Result<(), Error> {
+        handshake_with_sessions(client, server, Arc::new(PeerSessionStore::new())).await
+    }
+
+    async fn handshake_with_sessions(
+        client: Arc<NoopPeerContext>,
+        server: Arc<NoopPeerContext>,
+        server_sessions: Arc<PeerSessionStore>,
+    ) -> Result<(), Error> {
+        let (client_tunnel, server_tunnel) = create_ring_tunnel_pair();
+        let session_key = crate::peers::conn::peer_session::SessionKey::new(client.network_identity().network_name, 1);
+        let previous_root = server_sessions.get(&session_key).map(|s| s.root_key());
+        let mut client = PeerConn::new(1, client, client_tunnel, Arc::new(PeerSessionStore::new()));
+        let mut server = PeerConn::new(2, server, server_tunnel, server_sessions.clone());
+        // Drop rejected connections immediately, as the real admission path does.
+        let client_task = async move { client.do_handshake_as_client().await };
+        let server_task = async move { server.do_handshake_as_server().await };
+        let (client_result, result) = timeout(Duration::from_secs(10), async {
+            tokio::join!(client_task, server_task)
+        }).await.expect("X.509 handshake must finish or reject within its timeout");
+        if result.is_err() {
+            assert_eq!(server_sessions.get(&session_key).map(|s| s.root_key()), previous_root,
+                "unauthenticated clients must not allocate or replace session state");
+        } else {
+            client_result.expect("authorized client's handshake must also succeed");
+        }
+        result
+    }
+
+    #[tokio::test]
+    async fn accepts_authorized_foreign_and_same_network_clients() {
+        for name in ["client-net", "public-node"] {
+            handshake(context(name, Some(client_auth()), true),
+                context("public-node", Some(server_auth()), true)).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_revoked_client_reconnecting_to_existing_session() {
+        let sessions = Arc::new(PeerSessionStore::new());
+        let client = context("client-net", Some(client_auth()), true);
+        let server = context("public-node", Some(server_auth()), true);
+        handshake_with_sessions(client.clone(), server.clone(), sessions.clone()).await.unwrap();
+        handshake_with_sessions(client.clone(), server, sessions.clone()).await.unwrap();
+
+        let mut revoked = server_auth();
+        revoked.client_crl_pem = vec![include_str!("../../tests/data/x509/revoked.crl.pem").to_owned()];
+        assert!(handshake_with_sessions(client,
+            context("public-node", Some(revoked), true), sessions).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn certificate_client_can_connect_to_unprotected_node() {
+        handshake(context("client-net", Some(client_auth()), true),
+            context("public-node", None, true)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_missing_untrusted_revoked_and_legacy_clients() {
+        let server = context("public-node", Some(server_auth()), true);
+        assert!(handshake(context("client-net", None, true), server.clone()).await.is_err());
+        assert!(handshake(context("client-net", Some(server_auth()), true), server.clone()).await.is_err());
+        assert!(handshake(context("client-net", None, false), server).await.is_err());
+        let mut untrusted = server_auth();
+        untrusted.trusted_client_ca_pem = vec![include_str!("../../tests/data/x509/other-ca.pem").to_owned()];
+        assert!(handshake(context("client-net", Some(client_auth()), true),
+            context("public-node", Some(untrusted), true)).await.is_err());
+        let mut revoked = server_auth();
+        revoked.client_crl_pem = vec![include_str!("../../tests/data/x509/revoked.crl.pem").to_owned()];
+        assert!(handshake(context("client-net", Some(client_auth()), true),
+            context("public-node", Some(revoked), true)).await.is_err());
+    }
 }

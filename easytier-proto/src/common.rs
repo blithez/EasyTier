@@ -730,3 +730,15 @@ mod tests {
         );
     }
 }
+
+// Do not expose PEM private keys through parent configuration Debug output.
+impl fmt::Debug for X509AuthConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("X509AuthConfig")
+            .field("trusted_client_ca_count", &self.trusted_client_ca_pem.len())
+            .field("client_certificate_configured", &self.client_certificate_pem.is_some())
+            .field("client_private_key_pem", &"<redacted>")
+            .field("client_crl_count", &self.client_crl_pem.len())
+            .finish()
+    }
+}

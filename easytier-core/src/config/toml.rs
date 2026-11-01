@@ -540,6 +540,12 @@ impl TomlConfig {
         {
             *private_key = REDACTED.to_owned();
         }
+        if let Some(key) = config.secure_mode.as_mut()
+            .and_then(|s| s.x509.as_mut())
+            .and_then(|x| x.client_private_key_pem.as_mut())
+        {
+            *key = REDACTED.to_owned();
+        }
         if let Some(private_key) = config
             .vpn_portal_config
             .as_mut()
