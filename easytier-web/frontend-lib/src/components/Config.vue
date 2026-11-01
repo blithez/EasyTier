@@ -17,6 +17,7 @@ import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AclManager from './acl/AclManager.vue'
 import UrlListInput from './UrlListInput.vue'
+import X509ClientIdentity from './X509ClientIdentity.vue'
 import { createVpnPortalConfig } from '../modules/vpnPortal'
 import type { VpnPortalClientConfig } from '../types/network'
 
@@ -32,7 +33,7 @@ const props = defineProps<{
   editVpnPortalClients?: boolean
 }>()
 
-defineEmits(['runNetwork'])
+const emit = defineEmits(['runNetwork', 'validationChanged'])
 
 const curNetwork = defineModel('curNetwork', {
   type: Object as () => NetworkConfig,
@@ -76,10 +77,18 @@ const credentialInvalid = computed(
   () => identityMode.value === 'credential' && !(curNetwork.value.credential_secret ?? '').trim(),
 )
 
+const x509Invalid = ref(false)
+
+watch(
+  () => !!props.configInvalid || credentialInvalid.value || x509Invalid.value,
+  invalid => emit('validationChanged', invalid),
+  { immediate: true },
+)
+
 const secureModeEnabled = computed({
   get: () => curNetwork.value.secure_mode?.enabled === true,
   set: (value: boolean) => {
-    curNetwork.value.secure_mode = value ? { enabled: true } : undefined
+    curNetwork.value.secure_mode = value ? { ...curNetwork.value.secure_mode, enabled: true } : undefined
   },
 })
 
@@ -318,7 +327,7 @@ function removeVpnPortalClient(index: number) {
                   <label for="network_name">{{ t('network_name') }}</label>
                   <InputText id="network_name" v-model="curNetwork.network_name" aria-describedby="network_name-help" />
                   <div v-if="!hideSecureMode && identityMode === 'secret'" class="flex items-center gap-2">
-                    <InputSwitch inputId="secure_mode" v-model="secureModeEnabled" />
+                    <InputSwitch inputId="secure_mode" v-model="secureModeEnabled" :disabled="!!curNetwork.secure_mode?.x509" />
                     <label for="secure_mode" class="cursor-pointer">{{ t('secure_mode') }}</label>
                     <span class="pi pi-question-circle text-sm" v-tooltip.top="t('secure_mode_hint')"></span>
                   </div>
@@ -349,6 +358,9 @@ function removeVpnPortalClient(index: number) {
                   </template>
                 </div>
               </div>
+
+              <X509ClientIdentity :key="curNetwork.instance_id" v-model="curNetwork.secure_mode"
+                @invalid="x509Invalid = $event" />
 
               <div class="flex flex-row gap-x-9 flex-wrap">
                 <div class="flex flex-col gap-2 basis-5/12 grow">
@@ -683,7 +695,7 @@ function removeVpnPortalClient(index: number) {
           </Panel>
 
           <div class="flex pt-6 justify-center">
-            <Button :label="actionLabel || t('run_network')" icon="pi pi-arrow-right" icon-pos="right" :disabled="configInvalid || credentialInvalid"
+            <Button :label="actionLabel || t('run_network')" icon="pi pi-arrow-right" icon-pos="right" :disabled="configInvalid || credentialInvalid || x509Invalid"
               @click="$emit('runNetwork', curNetwork)" />
           </div>
         </div>

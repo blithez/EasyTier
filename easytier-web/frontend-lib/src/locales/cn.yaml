@@ -811,3 +811,20 @@ disable_relay_data: 不转发数据
 disable_relay_data_help: 不转发其他节点的数据包，本节点不承载自身以外的流量。
 prefer_peer_relay: 优先凭证节点转发
 prefer_peer_relay_help: 优先通过已经转发到目标节点的凭证节点转发，而不是为同一目标再通告一条直连路径。
+
+x509_client_auth: "公共节点证书认证"
+x509_client_auth_help: "连接要求证书认证的公共节点时，分别导入 PEM 客户端证书链和对应的未加密私钥。导入后自动启用安全模式。"
+x509_import_certificate: "导入证书链"
+x509_import_private_key: "导入私钥"
+x509_configured: "已配置"
+x509_not_configured: "未配置"
+x509_remove_identity: "移除客户端证书和私钥"
+x509_private_key_storage: "私钥会随网络配置保存，导出的配置也会包含私钥，请勿分享。"
+x509_pair_required: "请同时导入客户端证书链和对应的私钥。"
+x509_invalid_certificate: "证书文件无效。请导入 PEM 证书链，客户端证书在前，中间证书在后。"
+x509_invalid_private_key: "私钥文件无效。请导入 PEM 格式的 PKCS#8、RSA 或 EC 私钥。"
+x509_encrypted_key: "暂不支持带密码的私钥，请先转换为未加密 PEM 私钥。"
+x509_chain_too_large: "证书链最多包含 8 张证书，解码后的总大小不能超过 48 KiB。"
+x509_file_too_large: "文件过大，请选择不超过 128 KiB 的 PEM 文件。"
+x509_read_failed: "无法读取文件，请重新选择证书或私钥文件。"
+x509_secure_mode_required: "证书认证需要启用安全模式。"

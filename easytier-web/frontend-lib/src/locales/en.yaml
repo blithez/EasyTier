@@ -811,3 +811,20 @@ disable_relay_data: Disable Data Relay
 disable_relay_data_help: Do not relay data packets for other peers, so this node carries no traffic it did not originate.
 prefer_peer_relay: Prefer Peer Relay
 prefer_peer_relay_help: Prefer a credential peer that already relays to a destination over advertising another direct edge to the same destination.
+
+x509_client_auth: "Public node certificate authentication"
+x509_client_auth_help: "For public nodes that require certificates, import a PEM client certificate chain and its matching unencrypted private key. Importing enables secure mode."
+x509_import_certificate: "Import certificate chain"
+x509_import_private_key: "Import private key"
+x509_configured: "Configured"
+x509_not_configured: "Not configured"
+x509_remove_identity: "Remove client certificate and private key"
+x509_private_key_storage: "The private key is saved with this network configuration and included in exported configurations. Do not share them."
+x509_pair_required: "Import both a client certificate chain and its matching private key."
+x509_invalid_certificate: "Invalid certificate file. Import a PEM chain with the client certificate first, followed by intermediate certificates."
+x509_invalid_private_key: "Invalid private key file. Import a PEM PKCS#8, RSA, or EC private key."
+x509_encrypted_key: "Password-protected private keys are not supported. Convert the key to unencrypted PEM first."
+x509_chain_too_large: "The chain must contain at most 8 certificates and at most 48 KiB of decoded data."
+x509_file_too_large: "The file is too large. Select a PEM file no larger than 128 KiB."
+x509_read_failed: "Could not read the file. Select the certificate or private key file again."
+x509_secure_mode_required: "Certificate authentication requires secure mode."

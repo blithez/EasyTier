@@ -1647,15 +1647,21 @@ impl PeerManagerCore {
         origin: PeerConnectionOrigin,
     ) -> Result<(PeerId, PeerConnId), Error> {
         self.peer_connection_admission
-            .add_tunnel_as_server_with_origin(tunnel, origin)
+            .add_tunnel_as_server_with_origin(tunnel, origin, None)
             .await
     }
 
     pub(crate) async fn add_attached_ring_tunnel_as_server(
         &self,
         tunnel: Box<dyn Tunnel>,
+        expected_static_pubkey: Option<[u8; 32]>,
     ) -> Result<(PeerId, PeerConnId), Error> {
-        self.add_tunnel_as_server_with_origin(tunnel, PeerConnectionOrigin::Attached)
+        self.peer_connection_admission
+            .add_tunnel_as_server_with_origin(
+                tunnel,
+                PeerConnectionOrigin::Attached,
+                expected_static_pubkey,
+            )
             .await
     }
 
@@ -2069,6 +2075,7 @@ impl PeerConnectionAdmission {
         &self,
         tunnel: Box<dyn Tunnel>,
         origin: PeerConnectionOrigin,
+        attached_static_pubkey: Option<[u8; 32]>,
     ) -> Result<(PeerId, PeerConnId), Error> {
         tracing::info!("add tunnel as server start");
         let resolved_remote_addr = tunnel.info().and_then(|info| info.resolved_remote_addr);
@@ -2082,6 +2089,9 @@ impl PeerConnectionAdmission {
             self.peer_session_store.clone(),
             origin,
         );
+        if let Some(public_key) = attached_static_pubkey {
+            conn.require_attached_peer_identity(public_key)?;
+        }
         let mut reserved_peer_id_network_name = None;
         let handshake_ret = conn
             .do_handshake_as_server_ext(|peer, network_name: &str| {

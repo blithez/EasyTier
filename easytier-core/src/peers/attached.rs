@@ -231,7 +231,10 @@ impl AttachedPeerRuntime {
 
         let (network_tunnel, attached_tunnel) = create_ring_tunnel_pair();
         let (network_result, attached_result) = tokio::join!(
-            network_peer_manager.add_attached_ring_tunnel_as_server(network_tunnel),
+            network_peer_manager.add_attached_ring_tunnel_as_server(
+                network_tunnel,
+                credential_public_key,
+            ),
             peer_manager.add_attached_ring_client_tunnel(attached_tunnel),
         );
         let connections = match (network_result, attached_result) {
@@ -448,7 +451,10 @@ fn build_peer_snapshot(
             enabled: true,
             local_private_key: Some(BASE64_STANDARD.encode(private.as_bytes())),
             local_public_key: Some(BASE64_STANDARD.encode(public.as_bytes())),
-            x509: snapshot.runtime.secure_mode.as_ref().and_then(|c| c.x509.clone()),
+            // The host authenticates this in-process peer using its registered
+            // ephemeral Noise key. Do not copy the host's CA policy or private
+            // client certificate into a separately scoped attached runtime.
+            x509: None,
         });
         Some(*public.as_bytes())
     } else {
@@ -542,6 +548,14 @@ mod tests {
         tcp_whitelist: Vec<String>,
         secure_mode_enabled: bool,
     ) -> (Arc<PeerManagerCore>, CoreRuntimeConfigStore) {
+        peer_manager_with_acl_secure_and_x509(tcp_whitelist, secure_mode_enabled, None)
+    }
+
+    fn peer_manager_with_acl_secure_and_x509(
+        tcp_whitelist: Vec<String>,
+        secure_mode_enabled: bool,
+        x509: Option<crate::proto::common::X509AuthConfig>,
+    ) -> (Arc<PeerManagerCore>, CoreRuntimeConfigStore) {
         let secure_mode = secure_mode_enabled.then(|| {
             let private = StaticSecret::from([99u8; 32]);
             let public = PublicKey::from(&private);
@@ -549,7 +563,7 @@ mod tests {
                 enabled: true,
                 local_private_key: Some(BASE64_STANDARD.encode(private.as_bytes())),
                 local_public_key: Some(BASE64_STANDARD.encode(public.as_bytes())),
-                x509: None,
+                x509,
             }
         });
         let runtime = PeerRuntimeConfig {
@@ -987,6 +1001,15 @@ mod tests {
     #[tokio::test]
     async fn secure_attached_runtime_removes_admin_and_group_secrets() {
         let (_network_peer_manager, store) = peer_manager_with_acl_and_secure(Vec::new(), true);
+        store.update_peer_with(|peer| {
+            peer.runtime.secure_mode.as_mut().unwrap().x509 =
+                Some(crate::proto::common::X509AuthConfig {
+                    trusted_client_ca_pem: vec!["host-only-ca".to_owned()],
+                    client_certificate_pem: Some("host-only-certificate".to_owned()),
+                    client_private_key_pem: Some("host-only-private-key".to_owned()),
+                    ..Default::default()
+                });
+        });
         let network = store.snapshot();
         let config = AttachedPeerConfig {
             name: "sanitized".to_owned(),
@@ -1000,6 +1023,10 @@ mod tests {
         let services = build_attached_services(&network.services, credential_public_key.is_some());
 
         assert!(credential_public_key.is_some());
+        assert!(snapshot.runtime.secure_mode.as_ref().unwrap().x509.is_none());
+        assert!(
+            network.peer.runtime.secure_mode.as_ref().unwrap().x509.is_some()
+        );
         assert!(snapshot.runtime.network_identity.network_secret.is_none());
         assert!(
             snapshot
@@ -1105,6 +1132,108 @@ mod tests {
                 .is_pubkey_trusted(&credential_public_key)
         );
         network_peer_manager.clear_resources().await;
+    }
+
+    #[cfg(feature = "x509-auth")]
+    #[tokio::test]
+    async fn x509_server_only_policy_authenticates_attached_peers_without_certificates() {
+        use crate::proto::{
+            common::X509AuthConfig,
+            peer_rpc::{PeerIdentityType, SecureAuthLevel},
+        };
+
+        let x509 = X509AuthConfig {
+            trusted_client_ca_pem: vec![include_str!("../../tests/data/x509/ca.pem").to_owned()],
+            ..Default::default()
+        };
+        let (network, store) =
+            peer_manager_with_acl_secure_and_x509(Vec::new(), true, Some(x509));
+        network.run().await.unwrap();
+        let identity_private_key = [11; 32];
+        let public_key = *PublicKey::from(&StaticSecret::from(identity_private_key)).as_bytes();
+        let attached = tokio::time::timeout(
+            Duration::from_secs(10),
+            AttachedPeerRuntime::connect(
+                network.clone(),
+                store,
+                AttachedPeerConfig {
+                    name: "x509-attached".to_owned(),
+                    virtual_ip: attached_ipv4(Ipv4Addr::new(10, 82, 0, 2)),
+                    groups: vec!["ops".to_owned()],
+                    identity_private_key,
+                },
+            ),
+        )
+        .await
+        .expect("server-only X.509 policy must not block attached peer admission")
+        .unwrap();
+
+        let peers = network.get_peer_map();
+        assert!(peers.has_direct_attached_peer(attached.peer_id()));
+        let connections = peers.list_peer_conns(attached.peer_id()).await.unwrap();
+        assert_eq!(connections.len(), 1);
+        assert_eq!(connections[0].noise_remote_static_pubkey, public_key.to_vec());
+        assert_eq!(
+            connections[0].secure_auth_level,
+            SecureAuthLevel::PeerVerified as i32,
+        );
+        assert_eq!(
+            connections[0].peer_identity_type,
+            PeerIdentityType::Credential as i32,
+        );
+        assert!(!attached.peer_manager.can_manage_credentials());
+        wait_for_route(&network, attached.peer_id(), Ipv4Addr::new(10, 82, 0, 2), true).await;
+        wait_for_acl_groups(&network, attached.peer_id(), &["ops"]).await;
+
+        // Even this already trusted credential must provide a certificate when
+        // connecting through ordinary listener admission. A ring transport alone
+        // is not an authentication exemption.
+        let (server, client) = create_ring_tunnel_pair();
+        let (server_result, _) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(
+                network.add_tunnel_as_server(server),
+                attached.peer_manager.add_client_tunnel(client),
+            )
+        })
+        .await
+        .unwrap();
+        assert!(server_result.is_err());
+        assert_eq!(
+            peers.list_peer_conns(attached.peer_id()).await.unwrap().len(),
+            1,
+        );
+
+        // A caller cannot select the privileged path for an unregistered key.
+        let (server, _client) = create_ring_tunnel_pair();
+        assert!(
+            network
+                .add_attached_ring_tunnel_as_server(server, Some([42; 32]))
+                .await
+                .is_err()
+        );
+
+        // Nor can an attached client substitute a different registered identity.
+        let expected = *PublicKey::from(&StaticSecret::from([12; 32])).as_bytes();
+        let registration = network
+            .register_ephemeral_credential(expected, Vec::new())
+            .unwrap();
+        let (server, client) = create_ring_tunnel_pair();
+        let (server_result, _) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(
+                network.add_attached_ring_tunnel_as_server(server, Some(expected)),
+                attached.peer_manager.add_attached_ring_client_tunnel(client),
+            )
+        })
+        .await
+        .unwrap();
+        assert!(server_result.is_err());
+        network
+            .revoke_ephemeral_credential_and_refresh(registration)
+            .await;
+
+        attached.close().await;
+        assert!(!network.credential_manager().is_pubkey_trusted(&public_key));
+        network.clear_resources().await;
     }
 
     #[tokio::test]

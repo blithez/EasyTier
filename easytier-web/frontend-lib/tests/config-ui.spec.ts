@@ -663,6 +663,24 @@ describe('Config.vue network config projection', () => {
     expect(curNetwork.instance_recv_bps_limit).toBeNull()
   })
 
+  it('blocks actions for a partial X.509 identity and allows removing it', async () => {
+    const config = makeConfig()
+    config.secure_mode = {
+      enabled: true,
+      x509: { trusted_client_ca_pem: [], client_crl_pem: [], client_certificate_pem: 'existing-certificate' },
+    }
+    const { curNetwork, wrapper } = mountConfig(config)
+    await nextTick()
+    expect((wrapper.get('button[data-label="run_network"]').element as HTMLButtonElement).disabled).toBe(true)
+    expect(wrapper.emitted('validationChanged')?.at(-1)).toEqual([true])
+    await wrapper.get('button[data-label="x509_remove_identity"]').trigger('click')
+    await nextTick()
+    expect(curNetwork.secure_mode?.x509).toBeUndefined()
+    expect((wrapper.get('button[data-label="run_network"]').element as HTMLButtonElement).disabled).toBe(false)
+    expect(wrapper.emitted('validationChanged')?.at(-1)).toEqual([false])
+    wrapper.unmount()
+  })
+
   it('emits runNetwork with the current projected config', async () => {
     const { curNetwork, wrapper } = mountConfig()
     await nextTick()

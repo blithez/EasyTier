@@ -390,7 +390,9 @@ export function normalizeNetworkConfig(config: NetworkConfig): NetworkConfig {
   normalized.credential_secret = config.credential_secret
   if (!normalized.network_secret && normalized.secure_mode?.local_private_key) {
     normalized.credential_secret ??= normalized.secure_mode.local_private_key
-    normalized.secure_mode = { enabled: true }
+    normalized.secure_mode.enabled = true
+    delete normalized.secure_mode.local_private_key
+    delete normalized.secure_mode.local_public_key
   }
 
   return normalized
@@ -414,7 +416,12 @@ export function toBackendNetworkConfig(config: NetworkConfig): NetworkConfig {
   const credentialSecret = (config.credential_secret ?? '').trim()
   if (credentialSecret) {
     backend.network_secret = undefined
-    backend.secure_mode = { enabled: true, local_private_key: credentialSecret }
+    backend.secure_mode = {
+      ...backend.secure_mode,
+      enabled: true,
+      local_private_key: credentialSecret,
+      local_public_key: undefined,
+    }
   }
 
   return NetworkConfigPb.toJson(backend, {

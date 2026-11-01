@@ -31,6 +31,7 @@ const curNetworkInfo = ref<NetworkTypes.NetworkInstance | null>(null);
 const showConfigEditDialog = ref(false);
 const isEditingNetwork = ref(false); // Flag to indicate if we're in network editing mode
 const currentNetworkConfig = ref<NetworkTypes.NetworkConfig | undefined>(undefined);
+const configFormInvalid = ref(false);
 
 const listInstanceIdResponse = ref<Api.ListNetworkInstanceIdResponse | undefined>(undefined);
 
@@ -208,7 +209,7 @@ const confirmDeleteNetwork = (event: any) => {
 
 const saveAndRunNewNetwork = async (config?: NetworkTypes.NetworkConfig) => {
     const cfg = config ?? currentNetworkConfig.value;
-    if (!cfg) {
+    if (!cfg || configFormInvalid.value) {
         return;
     }
 
@@ -242,7 +243,7 @@ const saveAndRunNewNetwork = async (config?: NetworkTypes.NetworkConfig) => {
 }
 
 const saveNetworkConfig = async () => {
-    if (!currentNetworkConfig.value) {
+    if (!currentNetworkConfig.value || configFormInvalid.value) {
         return;
     }
     await props.api.save_config(currentNetworkConfig.value);
@@ -569,7 +570,7 @@ onUnmounted(() => {
                         :label="t('web.device_management.edit_as_file')" iconPos="left" severity="secondary" />
                     <Button @click="importConfig" icon="pi pi-upload" :label="t('web.device_management.import_config')"
                         iconPos="left" severity="help" />
-                    <Button v-if="networkIsDisabled" @click="saveNetworkConfig" :disabled="!currentNetworkConfig"
+                    <Button v-if="networkIsDisabled" @click="saveNetworkConfig" :disabled="!currentNetworkConfig || configFormInvalid"
                         icon="pi pi-save" :label="t('web.device_management.save_config')" iconPos="left"
                         severity="success" />
                 </div>
@@ -577,6 +578,7 @@ onUnmounted(() => {
                 <Divider />
 
                 <Config :cur-network="currentNetworkConfig" :config-invalid="!currentNetworkConfig"
+                    @validation-changed="configFormInvalid = $event"
                     @run-network="saveAndRunNewNetwork"></Config>
             </div>
 

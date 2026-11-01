@@ -26,11 +26,20 @@ trusted_client_ca_pem = ['''
 ```
 
 A nonempty `trusted_client_ca_pem` makes certificate authentication mandatory for
-**every incoming peer connection**, including peers claiming the node's own
+**every incoming network peer connection**, including peers claiming the node's own
 network name. Missing, untrusted, invalid, expired, or revoked certificates are
 rejected. Legacy handshakes are rejected. The policy applies to all transports
 that use the peer handshake and is checked again on each new connection,
 including connections joining an existing session.
+
+VPN portal attached peers use a separate authenticated in-process path. The host
+registers each attached peer's ephemeral Noise public key before creating its
+ring connection, then verifies that exact key during the Noise handshake. This
+path is restricted to host-created attached rings in the host's own network;
+ordinary listener connections still require X.509 certificates even when their
+Noise keys are already trusted. Attached peers do not inherit the host's CA
+policy or client certificate/private key and retain credential-level privileges.
+They cannot use legacy handshakes on the authenticated attached path.
 
 Use a dedicated client CA. Every certificate accepted under these roots is
 allowed to access this node, subject to the existing relay policy. Do not put
@@ -71,6 +80,27 @@ key overrides preserve the X.509 configuration.
 This feature authenticates clients to nodes. Continue to pin the public node's
 Noise static key using the existing peer key-pinning mechanism to authenticate
 the node to the client.
+
+## Android GUI certificate import
+
+In the Android GUI, open a network's configuration, expand **Public node
+certificate authentication** under basic settings, and use **Import certificate
+chain** and **Import private key** to select the corresponding PEM files from
+the system file picker. The certificate file must contain the client certificate
+first, followed by any intermediates. Importing an identity enables secure mode.
+Both files are required before saving or starting the network. File imports are
+local; they are not uploaded to a certificate service.
+
+The form shows whether each file is configured without displaying private-key
+material. Invalid replacements leave the previous identity unchanged. **Remove
+client certificate and private key** removes only the client identity and
+preserves any server CA/revocation settings imported through TOML. Certificates
+also survive save/load and switching to the temporary-credential identity mode.
+
+This imports PEM files, not PKCS#12/PFX bundles or password-protected keys. It
+does not use Android Keystore: the PEM private key is saved with the network
+configuration and is included in configuration exports. The GUI and native
+library must both be rebuilt from this source to include X.509 support.
 
 ## Revocation and rotation
 
@@ -117,10 +147,18 @@ Run on a host with Rust and the project's native build prerequisites installed:
 
 ```sh
 cargo test -p easytier-core --lib x509 --features x509-auth
+cargo test -p easytier-core --lib secure_attached_runtime_removes_admin_and_group_secrets
 cargo test -p easytier-core --lib peer_conn_noise_handshake_advertises_liveness_echo
 cargo check -p easytier --features x509-auth
 cargo check -p easytier-core --no-default-features
 cargo fmt --all -- --check
+```
+
+Frontend import and configuration persistence tests:
+
+```sh
+pnpm --dir easytier-web/frontend-lib test:config-ui
+pnpm --dir easytier-gui build
 ```
 
 The tests cover certificate validation, proof tampering and replay, certificate

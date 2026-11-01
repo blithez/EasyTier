@@ -280,6 +280,8 @@ pub struct PeerConn {
     context: ArcPeerContext,
 
     secure_mode_cfg: Option<SecureModeConfig>,
+    // Set only by the privileged in-process attached-peer admission path.
+    attached_peer_static_pubkey: Option<[u8; 32]>,
     session_filter: PeerSessionTunnelFilter,
     noise_handshake_result: Option<NoiseHandshakeResult>,
 
@@ -379,6 +381,7 @@ impl PeerConn {
             context,
 
             secure_mode_cfg,
+            attached_peer_static_pubkey: None,
             session_filter,
             noise_handshake_result: None,
 
@@ -421,9 +424,38 @@ impl PeerConn {
             .unwrap_or(false)
     }
 
+    /// Selects credential authentication for a host-created attached ring.
+    /// This capability is never derived from peer-provided packet metadata.
+    pub(crate) fn require_attached_peer_identity(
+        &mut self,
+        public_key: [u8; 32],
+    ) -> Result<(), Error> {
+        if self.info.is_some()
+            || !self.is_attached()
+            || !self.is_secure_mode_enabled()
+            || !self
+                .tunnel_info
+                .as_ref()
+                .is_some_and(|info| info.tunnel_type == "ring")
+            || !self
+                .context
+                .is_pubkey_trusted(&public_key, &self.context.network_name())
+        {
+            return Err(Error::WaitRespError(
+                "attached peer authentication requires a trusted in-process Noise identity".to_owned(),
+            ));
+        }
+        self.attached_peer_static_pubkey = Some(public_key);
+        Ok(())
+    }
+
     fn x509_required(&self) -> bool {
-        self.secure_mode_cfg.as_ref().and_then(|c| c.x509.as_ref())
-            .is_some_and(|x| !x.trusted_client_ca_pem.is_empty())
+        self.attached_peer_static_pubkey.is_none()
+            && self
+                .secure_mode_cfg
+                .as_ref()
+                .and_then(|c| c.x509.as_ref())
+                .is_some_and(|x| !x.trusted_client_ca_pem.is_empty())
     }
 
     async fn respond_x509_challenge(&self, transcript: &[u8], challenge: &ZCPacket) -> Result<(), Error> {
@@ -1124,6 +1156,13 @@ impl PeerConn {
         let remote_network_name = msg1_pb.a_network_name.clone();
         self.record_control_rx(&remote_network_name, first_msg1_len);
 
+        if self.attached_peer_static_pubkey.is_some()
+            && remote_network_name != self.context.network_name()
+        {
+            return Err(Error::WaitRespError(
+                "attached peer must belong to the local network".to_owned(),
+            ));
+        }
         if self.x509_required() {
             if !msg1_pb.features.iter().any(|f| f == X509_FEATURE) {
                 return Err(Error::WaitRespError("X.509 client authentication support required".to_owned()));
@@ -1215,8 +1254,8 @@ impl PeerConn {
 
         // Authenticate before storing the client's static key or admitting any
         // application traffic. Apply to same-network peers as well as foreign peers.
-        if let Some(x509) = self.secure_mode_cfg.as_ref().and_then(|c| c.x509.as_ref())
-            && !x509.trusted_client_ca_pem.is_empty()
+        if self.x509_required()
+            && let Some(x509) = self.secure_mode_cfg.as_ref().and_then(|c| c.x509.as_ref())
         {
             #[cfg(feature = "x509-auth")]
             super::x509_auth::verify(x509, &handshake_hash_for_proof, &msg3_pb)
@@ -1236,6 +1275,16 @@ impl PeerConn {
         } else {
             None
         };
+        if let Some(expected) = self.attached_peer_static_pubkey
+            && (remote_static_key != Some(expected)
+                || !self
+                    .context
+                    .is_pubkey_trusted(&expected, &remote_network_name))
+        {
+            return Err(Error::WaitRespError(
+                "attached peer Noise identity does not match its registered credential".to_owned(),
+            ));
+        }
         session.check_or_set_peer_static_pubkey(remote_static_key)?;
 
         // Verify client authentication using unified logic
@@ -1330,10 +1379,10 @@ impl PeerConn {
             self.info = Some(handshake_rsp);
             self.is_client = Some(false);
         } else if hdr.packet_type == PacketType::HandShake as u8 {
-            if self.secure_mode_cfg.as_ref().and_then(|c| c.x509.as_ref())
-                .is_some_and(|x| !x.trusted_client_ca_pem.is_empty())
-            {
-                return Err(Error::WaitRespError("X.509 authentication requires a Noise handshake".to_owned()));
+            if self.x509_required() || self.attached_peer_static_pubkey.is_some() {
+                return Err(Error::WaitRespError(
+                    "authenticated admission requires a Noise handshake".to_owned(),
+                ));
             }
             let rsp = Self::decode_handshake_packet(&first_pkt)?;
             handshake_recved(self, &rsp.network_name)?;
