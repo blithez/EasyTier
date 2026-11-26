@@ -33,6 +33,16 @@ runs:
         sudo apt-get install -qqy build-essential mold musl-tools
       shell: bash
 
+    - name: Install ARM GNU toolchain
+      if: ${{ runner.os == 'Linux' && inputs.target == 'armv7-unknown-linux-gnueabihf' }}
+      run: sudo apt-get install -qqy gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+      shell: bash
+
+    - name: Install AArch64 GNU toolchain
+      if: ${{ runner.os == 'Linux' && inputs.target == 'aarch64-unknown-linux-gnu' }}
+      run: sudo apt-get install -qqy gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+      shell: bash
+
     - name: Setup protoc
       uses: arduino/setup-protoc@v3
       with:
@@ -91,7 +101,7 @@ runs:
         cd "$PWD/musl_gcc/${MUSL_TARGET}/lib/gcc/${MUSL_TARGET}/15.1.0" || exit 255
         # for panic-abort
         cp libgcc_eh.a libunwind.a
-        
+
         # for mimalloc
         ar x libgcc.a _ctzsi2.o _clz.o _bswapsi2.o
         ar rcs libctz.a _ctzsi2.o _clz.o _bswapsi2.o

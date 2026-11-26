@@ -114,7 +114,7 @@ panic = "abort"
 lto = true
 codegen-units = 1
 opt-level = 3
-debug = 2
+debug = 1
 # strip = true
 
 [profile.mini]

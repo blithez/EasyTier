@@ -1,10 +1,11 @@
 # region Native
 
 [target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+rustflags = ["-C", "link-arg=-fuse-ld=mold", "-C", "dwarf-version=5"]
 
 [target.aarch64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+linker = "aarch64-linux-gnu-gcc"
+rustflags = ["-C", "link-arg=-fuse-ld=mold", "-C", "dwarf-version=5"]
 
 [target.'cfg(all(windows, target_env = "msvc"))']
 rustflags = ["-C", "target-feature=+crt-static"]
@@ -22,20 +23,20 @@ rustflags = [
 # region CI
 
 [target.x86_64-unknown-linux-musl]
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "dwarf-version=5"]
 
 [target.aarch64-unknown-linux-musl]
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "dwarf-version=5"]
 
 [target.riscv64gc-unknown-linux-musl]
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "dwarf-version=5"]
 
 [target.armv7-unknown-linux-gnueabihf]
 linker = "arm-linux-gnueabihf-gcc"
-# rustflags = ["-C", "target-feature=+crt-static"]
+# rustflags = ["-C", "target-feature=+crt-static", "-C", "dwarf-version=5"]
 
 [target.armv7-unknown-linux-musleabihf]
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "dwarf-version=5"]
 
 [target.armv7-unknown-linux-musleabi]
 rustflags = ["-C", "target-feature=+crt-static"]
